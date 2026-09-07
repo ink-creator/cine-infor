@@ -4,7 +4,7 @@
  * Este projeto deve ser criado como um Apps Script INDEPENDENTE. Nao vincule o
  * codigo a planilha: assim, editores da planilha nao ganham acesso ao backend.
  * A unica superficie HTTP de operacao e doPost(), com acoes limitadas para
- * confirmar e-mail, criar pedido e consultar um status mediante token.
+ * confirmar e-mail, criar pedido, consultar status e emitir ticket mediante token.
  */
 
 const CONFIG_ = Object.freeze({
@@ -12,6 +12,7 @@ const CONFIG_ = Object.freeze({
   auditSheetName: 'Auditoria',
   maxPayloadBytes: 4096,
   maxNameLength: 100,
+  maxTickets: 10,
   maxPopcorn: 4,
   duplicateWindowMs: 30000,
   defaultOrdersPerHour: 5,
@@ -19,6 +20,13 @@ const CONFIG_ = Object.freeze({
   verificationCooldownSeconds: 60,
   buyerSessionTtlSeconds: 6 * 60 * 60,
   maxVerificationAttempts: 5,
+  verificationLimits: Object.freeze({
+    perEmailPerHour: 3,
+    perEmailPerDay: 5,
+    globalPerHour: 40,
+    globalPerDay: 80,
+    emailQuotaReserve: 10
+  }),
   status: Object.freeze({
     waiting: 'Aguardando',
     paid: 'Pago',
@@ -47,6 +55,7 @@ const CONFIG_ = Object.freeze({
   acceptedPayloadFields: Object.freeze([
     'nome',
     'turma',
+    'quantidadeIngressos',
     'querPipoca',
     'quantidadePipoca',
     'tipoPipoca',
@@ -76,7 +85,8 @@ const ORDER_HEADERS_ = Object.freeze([
   'CHAVE_REQUISICAO',
   'ULTIMA_ALTERACAO',
   'STATUS_CONFIRMADO',
-  'STATUS_TOKEN_HASH'
+  'STATUS_TOKEN_HASH',
+  'CODIGO_VALIDACAO_TICKET'
 ]);
 
 const AUDIT_HEADERS_ = Object.freeze([
@@ -108,7 +118,8 @@ const COL_ = Object.freeze({
   requestKey: 17,
   updatedAt: 18,
   confirmedStatus: 19,
-  statusTokenHash: 20
+  statusTokenHash: 20,
+  ticketValidationCode: 21
 });
 
 function PublicError_(code, message) {
@@ -188,6 +199,7 @@ function dispatchBuyerAction_(action, payload, sessionToken) {
         id: saved.id,
         createdAt: saved.createdAt.toISOString(),
         totalCents: saved.totalCents,
+        ticketQuantity: saved.ticketQuantity,
         status: saved.status,
         statusToken: saved.statusToken,
         pixPayload: pixPayload,
@@ -201,6 +213,9 @@ function dispatchBuyerAction_(action, payload, sessionToken) {
   }
   if (action === 'getOrderStatus') {
     return { order: getOrderStatus_(payload) };
+  }
+  if (action === 'issueTicket') {
+    return { ticket: issueTicket_(payload) };
   }
   throw new PublicError_('INVALID_ACTION', 'Operacao invalida.');
 }
@@ -283,6 +298,7 @@ function validateOrderPayload_(payload) {
 
   const name = normalizeName_(payload.nome);
   const className = normalizeClass_(payload.turma);
+  const ticketQuantity = normalizeTicketQuantity_(payload.quantidadeIngressos);
   const wantsPopcorn = requireBoolean_(payload.querPipoca, 'querPipoca');
   const wantsSoda = requireBoolean_(payload.querRefri, 'querRefri');
 
@@ -290,19 +306,32 @@ function validateOrderPayload_(payload) {
   const requestId = normalizeRequestId_(payload.requestId);
 
   // O total enviado pelo navegador nunca e usado.
-  const totalCents = CONFIG_.pricesInCents.ticket +
+  const totalCents = (ticketQuantity * CONFIG_.pricesInCents.ticket) +
     (popcornTypes.length * CONFIG_.pricesInCents.popcorn) +
     (wantsSoda ? CONFIG_.pricesInCents.soda : 0);
 
   return Object.freeze({
     name: name,
     className: className,
+    ticketQuantity: ticketQuantity,
     wantsPopcorn: wantsPopcorn,
     popcornTypes: popcornTypes,
     wantsSoda: wantsSoda,
     totalCents: totalCents,
     requestId: requestId
   });
+}
+
+function normalizeTicketQuantity_(value) {
+  // Compatibilidade temporaria com o site antigo durante a troca de versoes.
+  if (value === undefined) return 1;
+  if (!Number.isInteger(value) || value < 1 || value > CONFIG_.maxTickets) {
+    throw new PublicError_(
+      'INVALID_TICKET_QUANTITY',
+      'Escolha entre 1 e ' + CONFIG_.maxTickets + ' ingressos.'
+    );
+  }
+  return value;
 }
 
 function normalizeName_(value) {
@@ -422,6 +451,8 @@ function requestEmailVerification_(payload) {
       throw new PublicError_('TOO_MANY_REQUESTS', 'Aguarde um minuto antes de pedir outro codigo.');
     }
 
+    const rateReservation = requireVerificationEmailCapacity_(email, new Date());
+
     const code = createVerificationCode_();
     cache.put('otp:' + emailKey, JSON.stringify({
       hash: hmacHex_(email + '|' + code),
@@ -440,6 +471,7 @@ function requestEmailVerification_(payload) {
           '<p style="font-size:26px;font-weight:bold;letter-spacing:4px">' + code + '</p>' +
           '<p>Ele expira em 10 minutos. Se voce nao pediu este codigo, ignore a mensagem.</p>'
       });
+      recordVerificationEmailSent_(rateReservation);
     } catch (error) {
       cache.remove('otp:' + emailKey);
       cache.remove(cooldownKey);
@@ -466,45 +498,149 @@ function verifyEmailCode_(payload) {
   const cache = CacheService.getScriptCache();
   const emailKey = sha256Hex_(email);
   const otpKey = 'otp:' + emailKey;
-  const cached = cache.get(otpKey);
-  if (!cached) {
-    throw new PublicError_('CODE_EXPIRED', 'O codigo expirou. Solicite um novo.');
-  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
 
-  let verification;
   try {
-    verification = JSON.parse(cached);
-  } catch (error) {
-    cache.remove(otpKey);
-    throw new PublicError_('CODE_EXPIRED', 'O codigo expirou. Solicite um novo.');
-  }
-
-  const expected = String(verification.hash || '');
-  const received = hmacHex_(email + '|' + code);
-  if (!constantTimeEquals_(expected, received)) {
-    verification.attempts = Number(verification.attempts || 0) + 1;
-    if (verification.attempts >= CONFIG_.maxVerificationAttempts) {
-      cache.remove(otpKey);
-      throw new PublicError_('CODE_BLOCKED', 'Muitas tentativas. Solicite um novo codigo.');
+    const cached = cache.get(otpKey);
+    if (!cached) {
+      throw new PublicError_('CODE_EXPIRED', 'O codigo expirou. Solicite um novo.');
     }
-    cache.put(otpKey, JSON.stringify(verification), CONFIG_.verificationCodeTtlSeconds);
-    throw new PublicError_('INVALID_CODE', 'Codigo incorreto.');
-  }
 
-  cache.remove(otpKey);
-  const sessionToken = createOpaqueToken_();
-  cache.put(
-    'buyer-session:' + sha256Hex_(sessionToken),
-    email,
-    CONFIG_.buyerSessionTtlSeconds
-  );
+    let verification;
+    try {
+      verification = JSON.parse(cached);
+    } catch (error) {
+      cache.remove(otpKey);
+      throw new PublicError_('CODE_EXPIRED', 'O codigo expirou. Solicite um novo.');
+    }
+
+    const expected = String(verification.hash || '');
+    const received = hmacHex_(email + '|' + code);
+    if (!constantTimeEquals_(expected, received)) {
+      verification.attempts = Number(verification.attempts || 0) + 1;
+      if (verification.attempts >= CONFIG_.maxVerificationAttempts) {
+        cache.remove(otpKey);
+        throw new PublicError_('CODE_BLOCKED', 'Muitas tentativas. Solicite um novo codigo.');
+      }
+      cache.put(otpKey, JSON.stringify(verification), CONFIG_.verificationCodeTtlSeconds);
+      throw new PublicError_('INVALID_CODE', 'Codigo incorreto.');
+    }
+
+    cache.remove(otpKey);
+    const sessionToken = createOpaqueToken_();
+    cache.put(
+      'buyer-session:' + sha256Hex_(sessionToken),
+      email,
+      CONFIG_.buyerSessionTtlSeconds
+    );
+
+    return {
+      message: 'E-mail institucional confirmado.',
+      email: email,
+      sessionToken: sessionToken,
+      expiresInSeconds: CONFIG_.buyerSessionTtlSeconds
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function requireVerificationEmailCapacity_(email, now) {
+  const properties = PropertiesService.getScriptProperties();
+  const limits = getVerificationLimits_(properties);
+  const timeZone = Session.getScriptTimeZone() || 'America/Fortaleza';
+  const day = Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
+  const hour = Utilities.formatDate(now, timeZone, 'yyyy-MM-dd-HH');
+  const globalKey = 'OTP_RATE_GLOBAL_V1';
+  const emailKey = 'OTP_RATE_EMAIL_V1_' + sha256Hex_(email).substring(0, 24);
+  const globalState = normalizeVerificationRateState_(properties.getProperty(globalKey), day, hour);
+  const emailState = normalizeVerificationRateState_(properties.getProperty(emailKey), day, hour);
+
+  if (globalState.dayCount >= limits.globalPerDay ||
+      globalState.hourCount >= limits.globalPerHour ||
+      emailState.dayCount >= limits.perEmailPerDay ||
+      emailState.hourCount >= limits.perEmailPerHour ||
+      MailApp.getRemainingDailyQuota() <= limits.emailQuotaReserve) {
+    throw new PublicError_(
+      'EMAIL_LIMIT_REACHED',
+      'O envio de codigos esta temporariamente indisponivel. Tente mais tarde ou procure um organizador.'
+    );
+  }
 
   return {
-    message: 'E-mail institucional confirmado.',
-    email: email,
-    sessionToken: sessionToken,
-    expiresInSeconds: CONFIG_.buyerSessionTtlSeconds
+    properties: properties,
+    globalKey: globalKey,
+    emailKey: emailKey,
+    globalState: globalState,
+    emailState: emailState
   };
+}
+
+function recordVerificationEmailSent_(reservation) {
+  reservation.globalState.dayCount += 1;
+  reservation.globalState.hourCount += 1;
+  reservation.emailState.dayCount += 1;
+  reservation.emailState.hourCount += 1;
+  reservation.properties.setProperties((function () {
+    const values = {};
+    values[reservation.globalKey] = JSON.stringify(reservation.globalState);
+    values[reservation.emailKey] = JSON.stringify(reservation.emailState);
+    return values;
+  }()), false);
+}
+
+function normalizeVerificationRateState_(raw, day, hour) {
+  let state = {};
+  try {
+    state = raw ? JSON.parse(raw) : {};
+  } catch (error) {
+    state = {};
+  }
+
+  const sameDay = state.day === day;
+  const sameHour = sameDay && state.hour === hour;
+  return {
+    day: day,
+    dayCount: sameDay ? Math.max(0, Number(state.dayCount) || 0) : 0,
+    hour: hour,
+    hourCount: sameHour ? Math.max(0, Number(state.hourCount) || 0) : 0
+  };
+}
+
+function getVerificationLimits_(properties) {
+  return {
+    perEmailPerHour: positiveIntegerProperty_(
+      properties,
+      'MAX_VERIFICATION_EMAILS_PER_ADDRESS_PER_HOUR',
+      CONFIG_.verificationLimits.perEmailPerHour
+    ),
+    perEmailPerDay: positiveIntegerProperty_(
+      properties,
+      'MAX_VERIFICATION_EMAILS_PER_ADDRESS_PER_DAY',
+      CONFIG_.verificationLimits.perEmailPerDay
+    ),
+    globalPerHour: positiveIntegerProperty_(
+      properties,
+      'MAX_VERIFICATION_EMAILS_PER_HOUR',
+      CONFIG_.verificationLimits.globalPerHour
+    ),
+    globalPerDay: positiveIntegerProperty_(
+      properties,
+      'MAX_VERIFICATION_EMAILS_PER_DAY',
+      CONFIG_.verificationLimits.globalPerDay
+    ),
+    emailQuotaReserve: positiveIntegerProperty_(
+      properties,
+      'MIN_REMAINING_EMAIL_QUOTA',
+      CONFIG_.verificationLimits.emailQuotaReserve
+    )
+  };
+}
+
+function positiveIntegerProperty_(properties, name, fallback) {
+  const value = Number(properties.getProperty(name));
+  return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 function requireBuyerSession_(sessionToken) {
@@ -608,7 +744,7 @@ function saveOrder_(order, email) {
       spreadsheetSafeText_(email),
       spreadsheetSafeText_(order.name),
       spreadsheetSafeText_(order.className),
-      1,
+      order.ticketQuantity,
       order.popcornTypes.length,
       spreadsheetSafeText_(order.popcornTypes.join(', ')),
       order.wantsSoda ? 1 : 0,
@@ -622,7 +758,8 @@ function saveOrder_(order, email) {
       requestKey,
       now,
       CONFIG_.status.waiting,
-      hmacHex_(statusToken)
+      hmacHex_(statusToken),
+      ''
     ];
 
     sheet.appendRow(row);
@@ -638,6 +775,7 @@ function saveOrder_(order, email) {
       id: orderId,
       createdAt: now,
       totalCents: order.totalCents,
+      ticketQuantity: order.ticketQuantity,
       status: CONFIG_.status.waiting,
       statusToken: statusToken
     };
@@ -688,11 +826,26 @@ function findOrderByRequestKey_(sheet, requestKey) {
     id: String(row[COL_.id - 1]),
     createdAt: row[COL_.createdAt - 1] instanceof Date ? row[COL_.createdAt - 1] : new Date(row[COL_.createdAt - 1]),
     totalCents: Number(row[COL_.totalCents - 1]),
+    ticketQuantity: Number(row[COL_.ticketQuantity - 1]) || 1,
     status: String(row[COL_.status - 1])
   };
 }
 
 function getOrderStatus_(payload) {
+  const record = requireAuthorizedOrderRecord_(payload);
+  const row = record.row;
+  const paidAt = row[COL_.paidAt - 1];
+  return {
+    id: String(row[COL_.id - 1]),
+    status: getConfirmedStatusFromRow_(row),
+    paidAt: paidAt instanceof Date ? paidAt.toISOString() : null,
+    updatedAt: row[COL_.updatedAt - 1] instanceof Date
+      ? row[COL_.updatedAt - 1].toISOString()
+      : null
+  };
+}
+
+function requireAuthorizedOrderRecord_(payload) {
   assertOnlyFields_(payload, ['orderId', 'statusToken']);
   const orderId = typeof payload.orderId === 'string' ? payload.orderId.trim().toUpperCase() : '';
   const statusToken = typeof payload.statusToken === 'string' ? payload.statusToken.trim().toLowerCase() : '';
@@ -722,15 +875,119 @@ function getOrderStatus_(payload) {
     throw new PublicError_('ORDER_NOT_FOUND', 'Pedido nao encontrado.');
   }
 
-  const paidAt = row[COL_.paidAt - 1];
   return {
-    id: String(row[COL_.id - 1]),
-    status: String(row[COL_.confirmedStatus - 1] || row[COL_.status - 1]),
-    paidAt: paidAt instanceof Date ? paidAt.toISOString() : null,
-    updatedAt: row[COL_.updatedAt - 1] instanceof Date
-      ? row[COL_.updatedAt - 1].toISOString()
-      : null
+    sheet: sheet,
+    rowNumber: found.getRow(),
+    row: row
   };
+}
+
+function getConfirmedStatusFromRow_(row) {
+  return String(row[COL_.confirmedStatus - 1] || row[COL_.status - 1]);
+}
+
+function issueTicket_(payload) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    const record = requireAuthorizedOrderRecord_(payload);
+    const row = record.row;
+    const status = getConfirmedStatusFromRow_(row);
+    if (status !== CONFIG_.status.paid) {
+      if (status === CONFIG_.status.used) {
+        throw new PublicError_('TICKET_ALREADY_USED', 'Este ticket ja foi utilizado.');
+      }
+      throw new PublicError_('PAYMENT_NOT_CONFIRMED', 'O pagamento ainda nao foi confirmado.');
+    }
+
+    const orderId = String(row[COL_.id - 1]);
+    const validationCode = createTicketValidationCode_(orderId);
+    const storedCode = String(row[COL_.ticketValidationCode - 1] || '');
+    if (storedCode && !constantTimeEquals_(storedCode, validationCode)) {
+      throw new Error('Codigo de validacao do ticket inconsistente para ' + orderId + '.');
+    }
+    if (!storedCode) {
+      record.sheet
+        .getRange(record.rowNumber, COL_.ticketValidationCode)
+        .setValue(validationCode);
+      SpreadsheetApp.flush();
+    }
+
+    const fileName = 'ticket-cineinfor-' + orderId + '.pdf';
+    const pdf = HtmlService
+      .createHtmlOutput(createTicketHtml_(row, validationCode, new Date()))
+      .getAs('application/pdf')
+      .setName(fileName);
+
+    return {
+      fileName: fileName,
+      mimeType: 'application/pdf',
+      base64: Utilities.base64Encode(pdf.getBytes()),
+      validationCode: validationCode
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function createTicketValidationCode_(orderId) {
+  const raw = hmacHex_('ticket-v1|' + orderId).substring(0, 16).toUpperCase();
+  return raw.match(/.{1,4}/g).join('-');
+}
+
+function createTicketHtml_(row, validationCode, issuedAt) {
+  const ticketQuantity = Number(row[COL_.ticketQuantity - 1]) || 1;
+  const popcornQuantity = Number(row[COL_.popcornQuantity - 1]) || 0;
+  const popcornTypes = String(row[COL_.popcornTypes - 1] || '');
+  const sodaQuantity = Number(row[COL_.sodaQuantity - 1]) || 0;
+  const items = [ticketQuantity + (ticketQuantity === 1 ? ' ingresso' : ' ingressos')];
+  if (popcornQuantity > 0) {
+    items.push(popcornQuantity + ' pipoca(s)' + (popcornTypes ? ' (' + popcornTypes + ')' : ''));
+  }
+  if (sodaQuantity > 0) items.push(sodaQuantity + ' refrigerante(s)');
+
+  const timeZone = Session.getScriptTimeZone() || 'America/Fortaleza';
+  const issuedText = Utilities.formatDate(issuedAt, timeZone, 'dd/MM/yyyy HH:mm:ss');
+  const paidAt = row[COL_.paidAt - 1];
+  const paidText = paidAt instanceof Date
+    ? Utilities.formatDate(paidAt, timeZone, 'dd/MM/yyyy HH:mm:ss')
+    : 'Confirmado';
+
+  return '<!doctype html><html><head><meta charset="utf-8"><style>' +
+    '@page{size:100mm 160mm;margin:0}' +
+    '*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;color:#180705;background:#fff}' +
+    '.header{background:#990100;color:#fff;text-align:center;padding:18px 12px}' +
+    '.header h1{margin:0;font-size:25px}.header p{margin:5px 0 0;font-size:12px}' +
+    '.content{padding:18px}.ok{padding:10px;border:2px solid #27833b;color:#176128;text-align:center;font-weight:bold}' +
+    '.field{margin-top:13px}.label{font-size:9px;font-weight:bold;color:#7c5b45;text-transform:uppercase}' +
+    '.value{margin-top:3px;font-size:13px;line-height:1.35}.code{font-size:17px;font-weight:bold;letter-spacing:1px}' +
+    '.footer{margin-top:18px;border-top:1px dashed #9b806e;padding-top:10px;font-size:9px;line-height:1.45;color:#624a3b}' +
+    '</style></head><body><div class="header"><h1>CINE INFOR</h1><p>Ticket de entrada emitido pelo servidor</p></div>' +
+    '<div class="content"><div class="ok">PAGAMENTO CONFIRMADO</div>' +
+    ticketFieldHtml_('Nome', row[COL_.name - 1]) +
+    ticketFieldHtml_('Turma', row[COL_.className - 1]) +
+    ticketFieldHtml_('Itens', items.join(' + ')) +
+    ticketFieldHtml_('Total', row[COL_.totalFormatted - 1]) +
+    ticketFieldHtml_('Codigo do pedido', row[COL_.id - 1]) +
+    ticketFieldHtml_('Codigo de validacao', validationCode, ' code') +
+    ticketFieldHtml_('Pagamento confirmado em', paidText) +
+    '<div class="footer">Emitido em ' + htmlEscape_(issuedText) + '. Na entrada, o responsavel deve conferir na planilha se o pedido esta Pago, comparar o codigo de validacao e depois marcar Utilizado. Uma imagem ou PDF sozinho nao comprova o pagamento.</div>' +
+    '</div></body></html>';
+}
+
+function ticketFieldHtml_(label, value, extraClass) {
+  return '<div class="field"><div class="label">' + htmlEscape_(label) +
+    '</div><div class="value' + (extraClass || '') + '">' + htmlEscape_(value) + '</div></div>';
+}
+
+function htmlEscape_(value) {
+  return String(value === undefined || value === null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function buildRequestKey_(order, email, timestamp) {
@@ -740,6 +997,7 @@ function buildRequestKey_(order, email, timestamp) {
         email,
         order.name,
         order.className,
+        String(order.ticketQuantity),
         order.popcornTypes.join(','),
         order.wantsSoda ? '1' : '0',
         String(Math.floor(timestamp / CONFIG_.duplicateWindowMs))
@@ -771,6 +1029,16 @@ function configurarProjeto() {
   if (!properties.getProperty('AUTH_SECRET')) {
     properties.setProperty('AUTH_SECRET', createOpaqueToken_() + createOpaqueToken_());
   }
+  const securityDefaults = {
+    MAX_VERIFICATION_EMAILS_PER_ADDRESS_PER_HOUR: String(CONFIG_.verificationLimits.perEmailPerHour),
+    MAX_VERIFICATION_EMAILS_PER_ADDRESS_PER_DAY: String(CONFIG_.verificationLimits.perEmailPerDay),
+    MAX_VERIFICATION_EMAILS_PER_HOUR: String(CONFIG_.verificationLimits.globalPerHour),
+    MAX_VERIFICATION_EMAILS_PER_DAY: String(CONFIG_.verificationLimits.globalPerDay),
+    MIN_REMAINING_EMAIL_QUOTA: String(CONFIG_.verificationLimits.emailQuotaReserve)
+  };
+  Object.keys(securityDefaults).forEach(function (name) {
+    if (!properties.getProperty(name)) properties.setProperty(name, securityDefaults[name]);
+  });
 
   const spreadsheet = openConfiguredSpreadsheet_();
   const orders = ensureSheet_(spreadsheet, CONFIG_.sheetName, ORDER_HEADERS_);
@@ -798,11 +1066,17 @@ function ensureSheet_(spreadsheet, name, headers) {
 
 function migrateOrderSheetIfNeeded_(sheet, name) {
   if (name !== CONFIG_.sheetName) return;
-  const oldHeaders = ORDER_HEADERS_.slice(0, ORDER_HEADERS_.length - 1);
-  const actual = sheet.getRange(1, 1, 1, oldHeaders.length).getDisplayValues()[0];
-  if (actual.join('|') === oldHeaders.join('|') && !sheet.getRange(1, COL_.statusTokenHash).getValue()) {
-    sheet.getRange(1, COL_.statusTokenHash).setValue(ORDER_HEADERS_[COL_.statusTokenHash - 1]);
-  }
+  const width = Math.max(sheet.getLastColumn(), 1);
+  const actual = sheet.getRange(1, 1, 1, width).getDisplayValues()[0];
+  while (actual.length && actual[actual.length - 1] === '') actual.pop();
+
+  const isKnownPrefix = actual.length < ORDER_HEADERS_.length && actual.every(function (header, index) {
+    return header === ORDER_HEADERS_[index];
+  });
+  if (!isKnownPrefix) return;
+
+  const missing = ORDER_HEADERS_.slice(actual.length);
+  sheet.getRange(1, actual.length + 1, 1, missing.length).setValues([missing]);
 }
 
 function requireConfiguredSheet_(spreadsheet, name, headers) {

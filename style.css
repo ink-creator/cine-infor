@@ -1136,7 +1136,7 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
 }
 
 
-/* ---------- Quantidade de pipoca (stepper) ---------- */
+/* ---------- Quantidade de ingressos e pipoca (stepper) ---------- */
 
 .stepper {
   display: inline-flex;
@@ -1170,12 +1170,18 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
   cursor: not-allowed;
 }
 
+#ingressoQtdValor,
 #pipocaQtdValor {
   min-width: 20px;
   text-align: center;
   font-size: 16px;
   font-weight: 700;
   color: var(--ink);
+}
+
+.preco-ajuda {
+  color: var(--muted);
+  font-weight: 500;
 }
 
 .lista-pipocas {
@@ -1234,6 +1240,20 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
   font-size: 13px;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.resultado-header .aviso-reembolso {
+  margin-top: -8px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--red);
+  border-radius: 0 8px 8px 0;
+  background: rgba(153, 1, 0, .06);
+  color: var(--ink);
+}
+
+.aviso-reembolso a {
+  color: var(--red);
+  font-weight: 800;
 }
 
 .pagamento-status {
@@ -1421,6 +1441,15 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
 .btn-ticket:hover {
   background: #2b0c08;
   transform: translateY(-1px);
+}
+
+.btn-novo-pedido {
+  margin-top: 10px;
+  min-height: 46px;
+}
+
+.btn-novo-pedido[hidden] {
+  display: none;
 }
 
 @media (max-width: 680px) {

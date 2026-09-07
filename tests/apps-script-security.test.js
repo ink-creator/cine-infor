@@ -22,12 +22,14 @@ const context = vm.createContext({
   RegExp,
   Error,
   PropertiesService: {},
-  Session: {},
+  Session: { getScriptTimeZone: () => 'America/Fortaleza' },
   SpreadsheetApp: {},
   LockService: {},
   ScriptApp: {},
   ContentService: {},
-  Utilities: {}
+  Utilities: {
+    formatDate: date => date.toISOString()
+  }
 });
 vm.runInContext(source, context, { filename: 'Code.gs' });
 
@@ -35,6 +37,7 @@ function validPayload(overrides = {}) {
   return {
     nome: 'Maria da Silva',
     turma: '2 ano Informática',
+    quantidadeIngressos: 1,
     querPipoca: true,
     quantidadePipoca: 2,
     tipoPipoca: 'Salgada, Doce',
@@ -46,6 +49,28 @@ function validPayload(overrides = {}) {
 test('calcula o total no servidor', () => {
   const order = context.validateOrderPayload_(validPayload());
   assert.equal(order.totalCents, 600);
+});
+
+test('multiplica os ingressos no total calculado pelo servidor', () => {
+  const order = context.validateOrderPayload_(validPayload({ quantidadeIngressos: 3 }));
+  assert.equal(order.ticketQuantity, 3);
+  assert.equal(order.totalCents, 1000);
+});
+
+test('rejeita quantidades de ingressos invalidas', () => {
+  for (const quantidadeIngressos of [0, -1, 1.5, 11, '2']) {
+    assert.throws(
+      () => context.validateOrderPayload_(validPayload({ quantidadeIngressos })),
+      error => error.code === 'INVALID_TICKET_QUANTITY'
+    );
+  }
+});
+
+test('site antigo continua criando um ingresso durante a troca de versoes', () => {
+  const payload = validPayload();
+  delete payload.quantidadeIngressos;
+  const order = context.validateOrderPayload_(payload);
+  assert.equal(order.ticketQuantity, 1);
 });
 
 test('rejeita tentativa de enviar total pelo navegador', () => {
@@ -199,6 +224,59 @@ test('payload Pix usa o total calculado e inclui CRC', () => {
 test('estrutura da planilha reserva hash privado para consulta de status', () => {
   const headers = vm.runInContext('Array.from(ORDER_HEADERS_)', context);
   const statusTokenColumn = vm.runInContext('COL_.statusTokenHash', context);
-  assert.equal(headers.at(-1), 'STATUS_TOKEN_HASH');
-  assert.equal(statusTokenColumn, headers.length);
+  const ticketValidationColumn = vm.runInContext('COL_.ticketValidationCode', context);
+  assert.equal(headers[statusTokenColumn - 1], 'STATUS_TOKEN_HASH');
+  assert.equal(headers[ticketValidationColumn - 1], 'CODIGO_VALIDACAO_TICKET');
+  assert.equal(ticketValidationColumn, headers.length);
+});
+
+test('contador de e-mail reinicia por hora e por dia', () => {
+  const sameHour = context.normalizeVerificationRateState_(
+    JSON.stringify({ day: '2026-09-07', dayCount: 8, hour: '2026-09-07-10', hourCount: 3 }),
+    '2026-09-07',
+    '2026-09-07-10'
+  );
+  assert.equal(sameHour.dayCount, 8);
+  assert.equal(sameHour.hourCount, 3);
+
+  const nextHour = context.normalizeVerificationRateState_(
+    JSON.stringify({ day: '2026-09-07', dayCount: 8, hour: '2026-09-07-10', hourCount: 3 }),
+    '2026-09-07',
+    '2026-09-07-11'
+  );
+  assert.equal(nextHour.dayCount, 8);
+  assert.equal(nextHour.hourCount, 0);
+
+  const nextDay = context.normalizeVerificationRateState_(
+    JSON.stringify({ day: '2026-09-07', dayCount: 8, hour: '2026-09-07-10', hourCount: 3 }),
+    '2026-09-08',
+    '2026-09-08-09'
+  );
+  assert.equal(nextDay.dayCount, 0);
+  assert.equal(nextDay.hourCount, 0);
+});
+
+test('emissao do PDF exige status Pago no servidor', () => {
+  assert.match(source, /status !== CONFIG_\.status\.paid/);
+  assert.match(source, /createHtmlOutput\(createTicketHtml_/);
+  assert.match(source, /\.getAs\('application\/pdf'\)/);
+});
+
+test('ticket usa estado canonico e escapa texto antes do PDF', () => {
+  const headers = vm.runInContext('Array.from(ORDER_HEADERS_)', context);
+  const row = Array(headers.length).fill('');
+  const columns = vm.runInContext('COL_', context);
+  row[columns.id - 1] = 'CI-' + 'A'.repeat(32);
+  row[columns.name - 1] = '<script>alert(1)</script>';
+  row[columns.className - 1] = '2 ano Informatica';
+  row[columns.ticketQuantity - 1] = 3;
+  row[columns.totalFormatted - 1] = 'R$ 2,00';
+  row[columns.status - 1] = 'Pago';
+  row[columns.confirmedStatus - 1] = 'Aguardando';
+
+  assert.equal(context.getConfirmedStatusFromRow_(row), 'Aguardando');
+  const html = context.createTicketHtml_(row, 'AAAA-BBBB-CCCC-DDDD', new Date());
+  assert.doesNotMatch(html, /<script>alert/);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /3 ingressos/);
 });
