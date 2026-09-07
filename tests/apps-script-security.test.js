@@ -39,14 +39,20 @@ function validPayload(overrides = {}) {
     quantidadePipoca: 2,
     tipoPipoca: 'Salgada, Doce',
     querRefri: true,
-    total: '0.01',
     ...overrides
   };
 }
 
-test('recalcula o total no servidor e ignora total adulterado', () => {
+test('calcula o total no servidor', () => {
   const order = context.validateOrderPayload_(validPayload());
   assert.equal(order.totalCents, 600);
+});
+
+test('rejeita tentativa de enviar total pelo navegador', () => {
+  assert.throws(
+    () => context.validateOrderPayload_(validPayload({ total: '0.01' })),
+    error => error.code === 'UNEXPECTED_FIELD'
+  );
 });
 
 test('rejeita tentativa de enviar status', () => {
@@ -84,13 +90,6 @@ test('rejeita booleano representado como string', () => {
   );
 });
 
-test('rejeita total em formato estrutural inesperado mesmo sem confiar nele', () => {
-  assert.throws(
-    () => context.validateOrderPayload_(validPayload({ total: { status: 'Pago' } })),
-    error => error.code === 'INVALID_FIELD'
-  );
-});
-
 test('rejeita dois formatos conflitantes de tipos de pipoca', () => {
   assert.throws(
     () => context.validateOrderPayload_(validPayload({ tiposPipoca: ['Salgada', 'Doce'] })),
@@ -119,6 +118,7 @@ test('dominio institucional exige correspondencia exata', () => {
   assert.equal(context.isInstitutionalEmail_('aluno@escola.edu.br', 'escola.edu.br'), true);
   assert.equal(context.isInstitutionalEmail_('aluno@escola.edu.br.atacante.com', 'escola.edu.br'), false);
   assert.equal(context.isInstitutionalEmail_('aluno@gmail.com', 'escola.edu.br'), false);
+  assert.equal(context.isInstitutionalEmail_('aluno\ninvasor@escola.edu.br', 'escola.edu.br'), false);
 });
 
 test('somente as transicoes de status planejadas sao aceitas', () => {
@@ -148,4 +148,57 @@ test('parse rejeita JSON grande ou raiz em array', () => {
     () => context.parseRequestBody_({ postData: { contents: '[]' } }),
     error => error.code === 'INVALID_BODY'
   );
+});
+
+test('ponte do frontend aceita somente request id e objeto validos', () => {
+  const request = context.parseBridgeRequest_({
+    parameter: {
+      action: 'getPublicConfig',
+      requestId: '12345678-1234-1234-1234-123456789abc',
+      payload: '{}'
+    }
+  });
+  assert.equal(request.action, 'getPublicConfig');
+  assert.equal(request.requestId, '12345678-1234-1234-1234-123456789abc');
+
+  assert.throws(
+    () => context.parseBridgeRequest_({
+      parameter: { action: 'x', requestId: 'curto', payload: '{}'}
+    }),
+    error => error.code === 'INVALID_REQUEST_ID'
+  );
+  assert.throws(
+    () => context.parseBridgeRequest_({
+      parameter: {
+        action: 'x',
+        requestId: '12345678-1234-1234-1234-123456789abc',
+        payload: '[]'
+      }
+    }),
+    error => error.code === 'INVALID_BODY'
+  );
+});
+
+test('comparacao de segredo rejeita diferencas', () => {
+  assert.equal(context.constantTimeEquals_('abcdef', 'abcdef'), true);
+  assert.equal(context.constantTimeEquals_('abcdef', 'abcdeg'), false);
+  assert.equal(context.constantTimeEquals_('abcdef', 'abc'), false);
+});
+
+test('payload Pix usa o total calculado e inclui CRC', () => {
+  const payload = context.createPixPayload_(
+    'CI-' + 'A'.repeat(32),
+    600,
+    { key: 'pix@example.com', receiverName: 'CINE INFOR', city: 'FORTALEZA' }
+  );
+  assert.match(payload, /54046\.00/);
+  assert.match(payload, /BR\.GOV\.BCB\.PIX/);
+  assert.match(payload, /6304[A-F0-9]{4}$/);
+});
+
+test('estrutura da planilha reserva hash privado para consulta de status', () => {
+  const headers = vm.runInContext('Array.from(ORDER_HEADERS_)', context);
+  const statusTokenColumn = vm.runInContext('COL_.statusTokenHash', context);
+  assert.equal(headers.at(-1), 'STATUS_TOKEN_HASH');
+  assert.equal(statusTokenColumn, headers.length);
 });

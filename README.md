@@ -1,14 +1,23 @@
 # Cine Infor
 
-Site de pedidos para o cinema escolar, com pagamento Pix confirmado manualmente.
+Site de pedidos para o cinema escolar, com acesso por e-mail institucional e pagamento Pix confirmado manualmente.
+
+## Fluxo
+
+1. O aluno confirma o e-mail institucional com um código.
+2. O backend cria o pedido e devolve o QR Pix.
+3. A página mostra `Aguardando confirmação`.
+4. Um responsável confere o extrato e marca o pedido como `Pago`.
+5. A página mostra `Pagamento confirmado` e libera o ticket.
 
 ## Estrutura
 
-- `index.html`, `style.css` e `script.js`: frontend existente.
+- `index.html` e `style.css`: frontend usado pelo site.
 - `apps-script/Code.gs`: backend seguro para Google Apps Script.
 - `apps-script/appsscript.json`: manifesto do Apps Script.
-- `apps-script/README.md`: instalação, propriedades e implantação.
+- `GUIA_CONFIGURACAO.md`: passo a passo completo de instalação e operação.
+- `apps-script/README.md`: resumo técnico do backend.
 - `docs/SEGURANCA.md`: modelo de segurança e roteiro de testes.
 - `tests/apps-script-security.test.js`: testes automatizados das validações críticas.
 
-O HTML não foi alterado. Antes de aceitar pagamentos reais, a integração do frontend precisa ser autorizada e concluída conforme `apps-script/README.md`.
+Comece pelo [guia de configuração](GUIA_CONFIGURACAO.md). Antes de aceitar pagamentos reais, faça o teste completo descrito no guia.

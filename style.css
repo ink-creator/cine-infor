@@ -749,6 +749,7 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
 }
 
 #formCineInfor input[type="text"],
+#formCineInfor input[type="email"],
 #formCineInfor select {
   width: 100%;
   min-height: 46px;
@@ -763,11 +764,13 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
   transition: border-color .2s ease, box-shadow .2s ease;
 }
 
-#formCineInfor input[type="text"]::placeholder {
+#formCineInfor input[type="text"]::placeholder,
+#formCineInfor input[type="email"]::placeholder {
   color: rgba(124, 91, 69, .65);
 }
 
 #formCineInfor input[type="text"]:focus,
+#formCineInfor input[type="email"]:focus,
 #formCineInfor select:focus {
   border-color: var(--red);
   box-shadow: 0 0 0 3px var(--red-glow);
@@ -775,6 +778,67 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
 
 #formCineInfor select {
   cursor: pointer;
+}
+
+#dadosPedido {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+#dadosPedido:disabled {
+  opacity: .58;
+}
+
+.campo-ajuda {
+  margin: -3px 0 1px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.verificacao-linha,
+.verificacao-codigo {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.verificacao-linha input,
+.verificacao-codigo input {
+  flex: 1 1 260px;
+}
+
+.verificacao-botao {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 142px;
+  padding: 0 16px;
+}
+
+.verificacao-botao:disabled,
+.button-secundario:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.email-status {
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.email-status.sucesso {
+  color: #18753a;
+}
+
+.email-status.erro {
+  color: #b42318;
 }
 
 .opcoes {
@@ -838,7 +902,7 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
 
 .form-submit:disabled {
   opacity: .65;
-  cursor: wait;
+  cursor: not-allowed;
   transform: none;
 }
 
@@ -877,6 +941,10 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
   #formCineInfor .campo {
     padding: 17px;
   }
+
+  #dadosPedido {
+    gap: 12px;
+  }
 }
 
 @media (max-width: 420px) {
@@ -903,6 +971,20 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
 
   .opcoes {
     flex-direction: column;
+  }
+
+  .verificacao-linha,
+  .verificacao-codigo {
+    flex-direction: column;
+  }
+
+  .verificacao-linha input,
+  .verificacao-codigo input {
+    flex-basis: auto;
+  }
+
+  .verificacao-botao {
+    width: 100%;
   }
 
   .opcoes label {
@@ -1145,6 +1227,68 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
   font-size: 13px;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.pagamento-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 22px;
+  padding: 13px 14px;
+  border: 1px solid #e7b65b;
+  border-radius: 11px;
+  background: #fff8e8;
+  color: #704b09;
+}
+
+.pagamento-status-icone {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+  border: 3px solid rgba(112, 75, 9, .25);
+  border-top-color: #9a6508;
+  border-radius: 50%;
+  animation: statusSpin .9s linear infinite;
+}
+
+.pagamento-status div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pagamento-status strong {
+  font-size: 13.5px;
+}
+
+.pagamento-status div > span {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pagamento-status.confirmado {
+  border-color: #9bd2ad;
+  background: #eefaf1;
+  color: #176b35;
+}
+
+.pagamento-status.confirmado .pagamento-status-icone {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  animation: none;
+}
+
+.pagamento-status.confirmado .pagamento-status-icone::before {
+  content: '\2713';
+  display: block;
+  font-size: 19px;
+  font-weight: 900;
+  line-height: 18px;
+}
+
+@keyframes statusSpin {
+  to { transform: rotate(360deg); }
 }
 
 .resultado-body {

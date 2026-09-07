@@ -3,12 +3,15 @@
 ## O que esta implementação protege
 
 - Planilha privada, acessada pelo site somente por meio do Apps Script.
-- Acesso do comprador limitado à criação de pedido.
-- E-mail obtido da sessão Google; o backend não confia em um e-mail digitado no formulário.
+- Acesso do comprador limitado à criação e à consulta protegida do próprio pedido.
+- Posse do e-mail institucional confirmada por um código temporário enviado ao endereço informado.
 - Domínio institucional comparado de forma exata.
+- Código de seis dígitos com expiração, limite de tentativas e intervalo de reenvio.
+- Sessão temporária armazenada no cache do servidor e identificada por token aleatório.
+- Consulta de status exige o ID e um token específico do pedido; o token é armazenado somente como HMAC na planilha.
 - Campos desconhecidos, incluindo `status`, são rejeitados.
 - Preços e total recalculados no servidor em centavos.
-- IDs aleatórios gerados no servidor.
+- IDs de pedidos aleatórios gerados no servidor.
 - Limite de pedidos por conta e janela de deduplicação.
 - Bloqueio de concorrência durante gravações.
 - Textos neutralizados antes de entrar no Sheets, evitando fórmulas injetadas.
@@ -26,11 +29,13 @@ A defesa aplicada aqui é do lado servidor: mesmo com a URL conhecida e o JavaSc
 
 ## Pontos que continuam dependendo de configuração humana
 
-- O Google Workspace da escola precisa permitir implantação restrita ao domínio.
-- A implantação precisa estar configurada para o domínio, não para acesso anônimo.
+- O servidor de e-mail institucional precisa aceitar as mensagens enviadas pela conta responsável pelo Apps Script.
+- A implantação precisa executar como a conta responsável e aceitar acesso público; códigos, sessões e tokens fazem a autorização das operações.
+- `ALLOWED_ORIGINS` deve conter somente as origens em que o site oficial é publicado.
 - A planilha precisa continuar com acesso geral `Restrito`.
 - `ADMIN_EMAILS` deve conter somente organizadores ativos.
-- O projeto Apps Script deve ficar sob uma conta institucional controlada, com 2FA.
+- A conta pessoal responsável pelo Apps Script e pela planilha deve ter 2FA.
+- As cotas de envio de e-mail e execução do Apps Script devem ser testadas com o público esperado.
 - O responsável precisa revisar permissões quando alguém sair da organização.
 - Backups devem ser feitos antes do evento e antes de mudanças importantes.
 - O extrato bancário é a fonte da confirmação do Pix, não o comprovante apresentado.
@@ -47,7 +52,7 @@ A defesa aplicada aqui é do lado servidor: mesmo com a URL conhecida e o JavaSc
 8. Mandar JSON inválido, array no lugar de objeto, corpo vazio ou corpo acima de 4 KB.
 9. Repetir rapidamente o mesmo pedido e confirmar que não são criadas duplicatas acidentais.
 10. Tentar mais pedidos por hora do que o limite configurado.
-11. Tentar acessar usando Gmail pessoal ou conta de outro domínio.
+11. Tentar confirmar usando Gmail pessoal ou conta de outro domínio.
 12. Tentar um domínio enganoso, como `escola.edu.br.exemplo.com`.
 13. Abrir a URL do Web App por `GET` e confirmar que nenhum pedido ou dado é exibido.
 14. Procurar no código público por ID da planilha, lista de administradores ou segredos.
@@ -64,5 +69,6 @@ A defesa aplicada aqui é do lado servidor: mesmo com a URL conhecida e o JavaSc
 25. Testar cotas e comportamento sob muitas requisições antes do dia do evento.
 26. Verificar as bibliotecas externas de QR Code e PDF; preferir arquivos próprios ou usar integridade (`SRI`) e política de conteúdo (`CSP`).
 27. Confirmar que o e-mail do autor aparece no gatilho de edição do Workspace; se o Google não o fornecer, a alteração deve falhar fechada.
-
-Os itens 23 e 24 continuarão falhando enquanto o frontend antigo usar `no-cors` e gerar total/código localmente. Não publique pagamentos reais antes de concluir essa integração.
+28. Tentar consultar um pedido sem token, com token de outro pedido e com ID inexistente.
+29. Errar o código de e-mail cinco vezes e confirmar o bloqueio.
+30. Confirmar que a página continua em `Aguardando confirmação` até um responsável marcar `Pago`.

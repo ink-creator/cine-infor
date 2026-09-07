@@ -152,17 +152,17 @@
 
             <div class="precos-destaque">
               <span>Ingresso</span>
-              <strong>R$ 2</strong>
+              <strong id="precoIngresso">R$ 2,00</strong>
             </div>
 
             <div>
               <span>Pipoca (unid.)</span>
-              <strong>R$ 3</strong>
+              <strong id="precoPipoca">R$ 1,50</strong>
             </div>
 
             <div>
               <span>Refrigerante</span>
-              <strong>R$ 2</strong>
+              <strong id="precoRefrigerante">R$ 1,00</strong>
             </div>
 
           </div>
@@ -418,6 +418,63 @@
 
         <form id="formCineInfor">
 
+          <!-- CONFIRMAÇÃO DO E-MAIL INSTITUCIONAL -->
+
+          <div class="campo verificacao-email">
+
+            <label for="emailInstitucional">
+              E-mail institucional:
+            </label>
+
+            <p class="campo-ajuda">
+              Enviaremos um código para confirmar que a conta educacional é sua.
+            </p>
+
+            <div class="verificacao-linha">
+              <input
+                type="email"
+                id="emailInstitucional"
+                autocomplete="email"
+                required
+                placeholder="seu.nome@aluno.ce.gov.br"
+              >
+
+              <button
+                type="button"
+                id="btnEnviarCodigo"
+                class="button-secundario verificacao-botao"
+              >
+                Enviar código
+              </button>
+            </div>
+
+            <div id="blocoCodigo" class="verificacao-codigo" hidden>
+              <input
+                type="text"
+                id="codigoVerificacao"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                maxlength="6"
+                pattern="[0-9]{6}"
+                placeholder="Código de 6 números"
+                aria-label="Código de verificação"
+              >
+
+              <button
+                type="button"
+                id="btnConfirmarCodigo"
+                class="button-secundario verificacao-botao"
+              >
+                Confirmar e-mail
+              </button>
+            </div>
+
+            <div id="emailStatus" class="email-status" aria-live="polite"></div>
+
+          </div>
+
+          <fieldset id="dadosPedido" disabled>
+
 
           <!-- NOME -->
 
@@ -559,7 +616,7 @@
           >
 
             <label>
-              Quantas pipocas? <span style="color:var(--muted); font-weight:500;">(R$ 3 cada)</span>
+              Quantas pipocas? <span id="precoPipocaTexto" style="color:var(--muted); font-weight:500;">(R$ 1,50 cada)</span>
             </label>
 
             <div class="stepper" id="pipocaQtdStepper">
@@ -633,6 +690,8 @@
 
           </div>
 
+          </fieldset>
+
 
           <!-- BOTÃO -->
 
@@ -640,8 +699,9 @@
             type="submit"
             id="btnEnviar"
             class="form-submit"
+            disabled
           >
-            Confirmar Presença
+            Gerar Pix
           </button>
 
         </form>
@@ -668,8 +728,16 @@
 
             <p>
               Escaneie o QR Code com o app do seu banco para pagar, ou copie o código Pix.
-              Depois, baixe o seu ticket para apresentar na entrada.
+              Depois do pagamento, aguarde a confirmação do responsável.
             </p>
+
+            <div id="pagamentoStatus" class="pagamento-status aguardando" role="status" aria-live="polite">
+              <span class="pagamento-status-icone" aria-hidden="true"></span>
+              <div>
+                <strong id="pagamentoStatusTitulo">Aguardando confirmação</strong>
+                <span id="pagamentoStatusTexto">Pague o Pix e mantenha esta página aberta.</span>
+              </div>
+            </div>
 
           </div>
 
@@ -713,8 +781,9 @@
             type="button"
             id="btnGerarTicket"
             class="btn-ticket"
+            disabled
           >
-            Baixar ticket (PDF)
+            Ticket disponível após a confirmação
           </button>
 
         </div>
@@ -892,31 +961,11 @@
     });
 
 
-    /* =========================
-       CONFIGURAÇÃO — PREÇOS, PIX
-       E WHATSAPP
-
-       ⚠️ Ajuste estes valores para
-       os dados reais do Cine Infor
-       antes de publicar o site.
-    ========================= */
-
-    const PRECOS = {
+    /* Valores iniciais para a tela. O backend sempre envia os preços oficiais. */
+    let PRECOS = {
       ingresso: 2,
       pipoca: 1.50,
       refrigerante: 1
-    };
-
-    const CONFIG_PIX = {
-      // Chave Pix que vai receber o pagamento
-      // (CPF, e-mail, telefone ou chave aleatória)
-      chave: 'PIX_KEY_AQUI',
-
-      // Nome do recebedor (máx. 25 caracteres, sem acento)
-      nomeRecebedor: 'CINE INFOR',
-
-      // Cidade do recebedor (máx. 15 caracteres, sem acento)
-      cidade: 'FORTALEZA'
     };
 
 
@@ -1072,109 +1121,126 @@
     ========================= */
 
     const URL_APPS_SCRIPT =
-      'https://script.google.com/macros/s/AKfycbxUGvBSrISFbcincsnqTAgj86RogqcpaDSyjKkbV_CHJfVhRvt49Y5LgQAXy1NYuOpR/exec';
+      'https://script.google.com/macros/s/AKfycbzaXnEdQ1L1K-GUvyyG4BMCucZbrmPfv9qsUeUfDkGE034LsWT8LbK7ZYktQIh6QBGlSw/exec';
 
 
     /* =========================
-       GERAÇÃO DO CÓDIGO PIX
-       (Pix Copia e Cola / EMV)
+       COMUNICAÇÃO COM O BACKEND
+
+       O formulário oculto recebe uma resposta real do Apps Script por
+       postMessage. Assim, erros não são confundidos com sucesso.
     ========================= */
 
-    function removerAcentos(texto) {
+    const requisicoesPendentes = new Map();
 
-      return texto
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
-
+    function criarRequestId() {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+      }
+      const bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
     }
 
-
-    function campoEmv(id, valor) {
-
-      const tamanho =
-        String(valor.length).padStart(2, '0');
-
-      return `${id}${tamanho}${valor}`;
-
+    function origemEhDoAppsScript(origem) {
+      try {
+        const host = new URL(origem).hostname;
+        return host === 'script.google.com' || host.endsWith('.googleusercontent.com');
+      } catch (error) {
+        return false;
+      }
     }
 
-
-    function crc16(payload) {
-
-      let crc = 0xFFFF;
-
-      for (let i = 0; i < payload.length; i++) {
-
-        crc ^= payload.charCodeAt(i) << 8;
-
-        for (let j = 0; j < 8; j++) {
-
-          if ((crc & 0x8000) !== 0) {
-
-            crc = (crc << 1) ^ 0x1021;
-
-          } else {
-
-            crc <<= 1;
-
-          }
-
-          crc &= 0xFFFF;
-
-        }
-
+    window.addEventListener('message', function (event) {
+      const resposta = event.data;
+      if (!origemEhDoAppsScript(event.origin) ||
+          !resposta ||
+          resposta.source !== 'cine-infor-backend' ||
+          !requisicoesPendentes.has(resposta.requestId)) {
+        return;
       }
 
-      return crc
-        .toString(16)
-        .toUpperCase()
-        .padStart(4, '0');
+      const pendente = requisicoesPendentes.get(resposta.requestId);
+      requisicoesPendentes.delete(resposta.requestId);
+      clearTimeout(pendente.timer);
+      pendente.iframe.remove();
 
+      if (resposta.ok) {
+        pendente.resolve(resposta);
+      } else {
+        const erro = new Error(resposta.error || 'Não foi possível concluir a operação.');
+        erro.code = resposta.code || 'BACKEND_ERROR';
+        pendente.reject(erro);
+      }
+    });
+
+    function chamarBackend(action, payload = {}, sessionToken = '') {
+      return new Promise((resolve, reject) => {
+        if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(URL_APPS_SCRIPT)) {
+          reject(new Error('O endereço do Apps Script ainda não foi configurado no index.html.'));
+          return;
+        }
+
+        const requestId = criarRequestId();
+        const frameName = `cine_infor_${requestId.replace(/-/g, '')}`;
+        const iframe = document.createElement('iframe');
+        iframe.name = frameName;
+        iframe.hidden = true;
+        iframe.title = 'Comunicação segura com o Cine Infor';
+        document.body.appendChild(iframe);
+
+        const formBridge = document.createElement('form');
+        formBridge.method = 'POST';
+        formBridge.action = URL_APPS_SCRIPT;
+        formBridge.target = frameName;
+        formBridge.hidden = true;
+
+        const campos = {
+          action,
+          requestId,
+          sessionToken,
+          payload: JSON.stringify(payload)
+        };
+        Object.entries(campos).forEach(([name, value]) => {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = name;
+          input.value = value;
+          formBridge.appendChild(input);
+        });
+
+        const timer = setTimeout(() => {
+          requisicoesPendentes.delete(requestId);
+          iframe.remove();
+          reject(new Error('O servidor demorou para responder. Tente novamente.'));
+        }, 30000);
+
+        requisicoesPendentes.set(requestId, { resolve, reject, timer, iframe });
+        document.body.appendChild(formBridge);
+        formBridge.submit();
+        formBridge.remove();
+      });
     }
 
-
-    function gerarPayloadPix({ chave, nome, cidade, valor, txid }) {
-
-      const nomeLimpo =
-        removerAcentos(nome)
-          .toUpperCase()
-          .substring(0, 25);
-
-      const cidadeLimpa =
-        removerAcentos(cidade)
-          .toUpperCase()
-          .substring(0, 15);
-
-      const txidLimpo =
-        (txid || 'CINEINFOR')
-          .replace(/[^a-zA-Z0-9]/g, '')
-          .substring(0, 25) || '***';
-
-      const valorFormatado =
-        Number(valor).toFixed(2);
-
-      const infoConta =
-        campoEmv('00', 'BR.GOV.BCB.PIX') +
-        campoEmv('01', chave);
-
-      const dadosAdicionais =
-        campoEmv('05', txidLimpo);
-
-      const payloadSemCrc =
-        campoEmv('00', '01') +
-        campoEmv('26', infoConta) +
-        campoEmv('52', '0000') +
-        campoEmv('53', '986') +
-        campoEmv('54', valorFormatado) +
-        campoEmv('58', 'BR') +
-        campoEmv('59', nomeLimpo) +
-        campoEmv('60', cidadeLimpa) +
-        campoEmv('62', dadosAdicionais) +
-        '6304';
-
-      return payloadSemCrc + crc16(payloadSemCrc);
-
+    function aplicarPrecos(precosEmCentavos) {
+      if (!precosEmCentavos) return;
+      PRECOS = {
+        ingresso: Number(precosEmCentavos.ticket) / 100,
+        pipoca: Number(precosEmCentavos.popcorn) / 100,
+        refrigerante: Number(precosEmCentavos.soda) / 100
+      };
+      document.getElementById('precoIngresso').textContent = formatarReais(PRECOS.ingresso);
+      document.getElementById('precoPipoca').textContent = formatarReais(PRECOS.pipoca);
+      document.getElementById('precoRefrigerante').textContent = formatarReais(PRECOS.refrigerante);
+      document.getElementById('precoPipocaTexto').textContent =
+        `(${formatarReais(PRECOS.pipoca)} cada)`;
     }
+
+    chamarBackend('getPublicConfig').then(resposta => {
+      aplicarPrecos(resposta.pricesInCents);
+    }).catch(() => {
+      // O formulário mostrará o erro de configuração quando houver interação.
+    });
 
 
     /* =========================
@@ -1199,10 +1265,21 @@
     const btnGerarTicket =
       document.getElementById('btnGerarTicket');
 
+    const pagamentoStatus =
+      document.getElementById('pagamentoStatus');
+
+    const pagamentoStatusTitulo =
+      document.getElementById('pagamentoStatusTitulo');
+
+    const pagamentoStatusTexto =
+      document.getElementById('pagamentoStatusTexto');
+
 
     let ultimoPixPayload = '';
 
     let ultimoPedido = null;
+
+    let timerPagamento = null;
 
 
     function formatarReais(valor) {
@@ -1213,25 +1290,13 @@
     }
 
 
-    function gerarCodigoPedido() {
-
-      const carimbo =
-        Date.now().toString(36).toUpperCase();
-
-      const sorteio =
-        Math.random()
-          .toString(36)
-          .substring(2, 6)
-          .toUpperCase();
-
-      return `CI-${carimbo}-${sorteio}`;
-
-    }
-
-
     function mostrarResultadoPedido(pedido) {
 
       ultimoPedido = pedido;
+
+      if (pedido.precosEmCentavos) {
+        aplicarPrecos(pedido.precosEmCentavos);
+      }
 
 
       /* Monta o resumo em texto */
@@ -1262,8 +1327,11 @@
         const li =
           document.createElement('li');
 
-        li.innerHTML =
-          `<span>${item.nome}</span><span>${formatarReais(item.valor)}</span>`;
+        const nomeItem = document.createElement('span');
+        const valorItem = document.createElement('span');
+        nomeItem.textContent = item.nome;
+        valorItem.textContent = formatarReais(item.valor);
+        li.append(nomeItem, valorItem);
 
         resumoLista.appendChild(li);
 
@@ -1275,14 +1343,7 @@
 
       /* Gera o QR Code do Pix */
 
-      const payload =
-        gerarPayloadPix({
-          chave: CONFIG_PIX.chave,
-          nome: CONFIG_PIX.nomeRecebedor,
-          cidade: CONFIG_PIX.cidade,
-          valor: pedido.total,
-          txid: pedido.codigo
-        });
+      const payload = pedido.pixPayload;
 
       ultimoPixPayload = payload;
 
@@ -1304,6 +1365,67 @@
         behavior: 'smooth',
         block: 'nearest'
       });
+
+    }
+
+
+    function atualizarPagamento(status) {
+
+      const confirmado = status === 'Pago' || status === 'Utilizado';
+
+      pagamentoStatus.classList.toggle('confirmado', confirmado);
+      pagamentoStatus.classList.toggle('aguardando', !confirmado);
+
+      if (confirmado) {
+        pagamentoStatusTitulo.textContent = 'Pagamento confirmado';
+        pagamentoStatusTexto.textContent =
+          status === 'Utilizado'
+            ? 'Pagamento confirmado e ticket já utilizado.'
+            : 'O responsável confirmou o recebimento do Pix.';
+        btnGerarTicket.disabled = false;
+        btnGerarTicket.textContent = 'Baixar ticket (PDF)';
+      } else {
+        pagamentoStatusTitulo.textContent = 'Aguardando confirmação';
+        pagamentoStatusTexto.textContent =
+          'Após pagar o Pix, aguarde o responsável conferir o recebimento.';
+        btnGerarTicket.disabled = true;
+        btnGerarTicket.textContent = 'Ticket disponível após a confirmação';
+      }
+
+      return confirmado;
+
+    }
+
+
+    async function consultarPagamento() {
+
+      if (!ultimoPedido || !ultimoPedido.statusToken) return;
+
+      try {
+        const resposta = await chamarBackend('getOrderStatus', {
+          orderId: ultimoPedido.codigo,
+          statusToken: ultimoPedido.statusToken
+        });
+
+        ultimoPedido.status = resposta.order.status;
+        sessionStorage.setItem('cineInforPedidoAtual', JSON.stringify(ultimoPedido));
+        if (atualizarPagamento(resposta.order.status)) {
+          clearInterval(timerPagamento);
+          timerPagamento = null;
+        }
+      } catch (error) {
+        console.warn('Não foi possível atualizar o pagamento:', error.message);
+      }
+
+    }
+
+
+    function acompanharPagamento() {
+
+      clearInterval(timerPagamento);
+      atualizarPagamento('Aguardando');
+      timerPagamento = setInterval(consultarPagamento, 5000);
+      setTimeout(consultarPagamento, 1500);
 
     }
 
@@ -1447,166 +1569,226 @@
     const statusMsg =
       document.getElementById('status');
 
+    const dadosPedido =
+      document.getElementById('dadosPedido');
 
-    form.addEventListener('submit', function (e) {
+    const emailInstitucional =
+      document.getElementById('emailInstitucional');
 
-      e.preventDefault();
+    const btnEnviarCodigo =
+      document.getElementById('btnEnviarCodigo');
+
+    const blocoCodigo =
+      document.getElementById('blocoCodigo');
+
+    const codigoVerificacao =
+      document.getElementById('codigoVerificacao');
+
+    const btnConfirmarCodigo =
+      document.getElementById('btnConfirmarCodigo');
+
+    const emailStatus =
+      document.getElementById('emailStatus');
+
+    let sessaoComprador = '';
+
+    let pedidoRequestId = '';
 
 
+    function mostrarEmailStatus(mensagem, tipo = '') {
+      emailStatus.textContent = mensagem;
+      emailStatus.className = `email-status ${tipo}`.trim();
+    }
+
+
+    function liberarFormulario(email, sessionToken, expiresInSeconds) {
+      sessaoComprador = sessionToken;
+      emailInstitucional.value = email;
+      emailInstitucional.disabled = true;
+      btnEnviarCodigo.hidden = true;
+      blocoCodigo.hidden = true;
+      dadosPedido.disabled = false;
+      btnEnviar.disabled = false;
+      mostrarEmailStatus(`E-mail confirmado: ${email}`, 'sucesso');
+      sessionStorage.setItem('cineInforSessao', JSON.stringify({
+        email,
+        sessionToken,
+        expiresAt: Date.now() + (Number(expiresInSeconds) * 1000)
+      }));
+    }
+
+
+    function expirarSessaoComprador() {
+      sessaoComprador = '';
+      sessionStorage.removeItem('cineInforSessao');
+      emailInstitucional.disabled = false;
+      btnEnviarCodigo.hidden = false;
+      dadosPedido.disabled = true;
       btnEnviar.disabled = true;
-
-      statusMsg.style.color = '#ffffff';
-
-      statusMsg.innerText =
-        'Enviando...';
-
-      resultadoPedido.style.display = 'none';
+      mostrarEmailStatus('Confirme novamente o seu e-mail institucional.', 'erro');
+    }
 
 
-      /* Pega o tipo de cada pipoca escolhida */
+    btnEnviarCodigo.addEventListener('click', async function () {
+      if (!emailInstitucional.reportValidity()) return;
 
-      const tiposPipoca = [];
+      btnEnviarCodigo.disabled = true;
+      mostrarEmailStatus('Enviando código...');
+      try {
+        const resposta = await chamarBackend('requestVerification', {
+          email: emailInstitucional.value.trim()
+        });
+        blocoCodigo.hidden = false;
+        codigoVerificacao.focus();
+        mostrarEmailStatus(resposta.message, 'sucesso');
+      } catch (error) {
+        mostrarEmailStatus(error.message, 'erro');
+      } finally {
+        btnEnviarCodigo.disabled = false;
+      }
+    });
 
-      if (pipocaSim.checked) {
 
-        for (let i = 1; i <= qtdPipoca; i++) {
+    btnConfirmarCodigo.addEventListener('click', async function () {
+      if (!codigoVerificacao.reportValidity()) return;
 
-          const selecionado =
-            document.querySelector(
-              `input[name="tipoPipoca_${i}"]:checked`
-            );
+      btnConfirmarCodigo.disabled = true;
+      mostrarEmailStatus('Confirmando código...');
+      try {
+        const resposta = await chamarBackend('verifyEmail', {
+          email: emailInstitucional.value.trim(),
+          code: codigoVerificacao.value.trim()
+        });
+        liberarFormulario(
+          resposta.email,
+          resposta.sessionToken,
+          resposta.expiresInSeconds
+        );
+      } catch (error) {
+        mostrarEmailStatus(error.message, 'erro');
+      } finally {
+        btnConfirmarCodigo.disabled = false;
+      }
+    });
 
-          tiposPipoca.push(
-            selecionado ? selecionado.value : 'N/A'
-          );
 
-        }
+    codigoVerificacao.addEventListener('input', function () {
+      codigoVerificacao.value = codigoVerificacao.value.replace(/\D/g, '').slice(0, 6);
+    });
 
+
+    codigoVerificacao.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        btnConfirmarCodigo.click();
+      }
+    });
+
+
+    form.addEventListener('submit', async function (event) {
+
+      event.preventDefault();
+      if (!sessaoComprador) {
+        expirarSessaoComprador();
+        return;
       }
 
+      btnEnviar.disabled = true;
+      statusMsg.style.color = '#7c5b45';
+      statusMsg.textContent = 'Criando pedido e gerando Pix...';
+      let pedidoCriado = false;
 
-      /* Verifica se quer refrigerante */
+      const tiposPipoca = [];
+      if (pipocaSim.checked) {
+        for (let i = 1; i <= qtdPipoca; i++) {
+          const selecionado = document.querySelector(
+            `input[name="tipoPipoca_${i}"]:checked`
+          );
+          if (selecionado) tiposPipoca.push(selecionado.value);
+        }
+      }
 
-      const querRefri =
-        document.querySelector(
-          'input[name="refri"][value="sim"]'
-        ).checked;
+      const querRefri = document.querySelector(
+        'input[name="refri"][value="sim"]'
+      ).checked;
 
-
-      /* Calcula o valor total do pedido */
-
-      const total =
-        PRECOS.ingresso +
-        (tiposPipoca.length * PRECOS.pipoca) +
-        (querRefri ? PRECOS.refrigerante : 0);
-
-
-      /* Dados que serão enviados */
+      if (!pedidoRequestId) pedidoRequestId = criarRequestId();
 
       const dados = {
-
-        nome:
-          document.getElementById('nome').value,
-
-        turma:
-          document.getElementById('turma').value,
-
-        querPipoca:
-          pipocaSim.checked,
-
-        quantidadePipoca:
-          tiposPipoca.length,
-
-        tipoPipoca:
-          tiposPipoca.length > 0
-            ? tiposPipoca.join(', ')
-            : 'N/A',
-
-        querRefri:
-          querRefri,
-
-        total:
-          total.toFixed(2)
-
+        nome: document.getElementById('nome').value,
+        turma: document.getElementById('turma').value,
+        querPipoca: pipocaSim.checked,
+        quantidadePipoca: tiposPipoca.length,
+        tiposPipoca,
+        querRefri,
+        requestId: pedidoRequestId
       };
 
+      try {
+        const resposta = await chamarBackend('createOrder', dados, sessaoComprador);
+        const ordem = resposta.order;
+        aplicarPrecos(ordem.pricesInCents);
 
-      /* Envia para o Google Apps Script */
-
-      fetch(URL_APPS_SCRIPT, {
-
-        method: 'POST',
-
-        mode: 'no-cors',
-
-        headers: {
-          'Content-Type': 'application/json'
-        },
-
-        body: JSON.stringify(dados)
-
-      })
-
-      .then(() => {
-
-        statusMsg.style.color =
-          '#28a745';
-
-        statusMsg.innerText =
-          'Pedido enviado com sucesso!';
-
-
-        /* Monta o "ticket" com os dados do pedido */
-
-        mostrarResultadoPedido({
+        const pedido = {
           nome: dados.nome,
           turma: dados.turma,
-          tiposPipoca: tiposPipoca,
-          querRefri: querRefri,
-          total: total,
-          codigo: gerarCodigoPedido(),
-          dataFormatada: new Date().toLocaleString('pt-BR')
-        });
+          tiposPipoca,
+          querRefri,
+          total: Number(ordem.totalCents) / 100,
+          codigo: ordem.id,
+          dataFormatada: new Date(ordem.createdAt).toLocaleString('pt-BR'),
+          pixPayload: ordem.pixPayload,
+          statusToken: ordem.statusToken,
+          precosEmCentavos: ordem.pricesInCents,
+          status: ordem.status
+        };
 
-
-        form.reset();
-
-
-        /*
-          Depois de enviar,
-          esconde novamente
-          a opção de pipoca.
-        */
-
-        blocoTipoPipoca.style.display =
-          'none';
-
-        listaPipocas.innerHTML = '';
-
-        qtdPipoca = 1;
-
-      })
-
-      .catch(error => {
-
-        statusMsg.style.color =
-          '#dc3545';
-
-        statusMsg.innerText =
-          'Erro ao enviar pedido.';
-
+        mostrarResultadoPedido(pedido);
+        if (!atualizarPagamento(ordem.status)) acompanharPagamento();
+        sessionStorage.setItem('cineInforPedidoAtual', JSON.stringify(pedido));
+        statusMsg.style.color = '#28a745';
+        statusMsg.textContent = 'Pix gerado. Após pagar, aguarde a confirmação do responsável.';
+        dadosPedido.disabled = true;
+        btnEnviar.textContent = 'Pedido gerado';
+        pedidoCriado = true;
+      } catch (error) {
+        statusMsg.style.color = '#dc3545';
+        statusMsg.textContent = error.message;
+        if (error.code === 'AUTH_REQUIRED' || error.code === 'SESSION_EXPIRED') {
+          expirarSessaoComprador();
+        }
         console.error(error);
-
-      })
-
-      .finally(() => {
-
-        btnEnviar.disabled =
-          false;
-
-      });
+      } finally {
+        if (!pedidoCriado && sessaoComprador) btnEnviar.disabled = false;
+      }
 
     });
+
+
+    try {
+      const sessaoSalva = JSON.parse(sessionStorage.getItem('cineInforSessao') || 'null');
+      if (sessaoSalva && sessaoSalva.expiresAt > Date.now()) {
+        liberarFormulario(
+          sessaoSalva.email,
+          sessaoSalva.sessionToken,
+          (sessaoSalva.expiresAt - Date.now()) / 1000
+        );
+      }
+
+      const pedidoSalvo = JSON.parse(sessionStorage.getItem('cineInforPedidoAtual') || 'null');
+      if (pedidoSalvo && pedidoSalvo.codigo && pedidoSalvo.statusToken) {
+        mostrarResultadoPedido(pedidoSalvo);
+        dadosPedido.disabled = true;
+        btnEnviar.disabled = true;
+        btnEnviar.textContent = 'Pedido gerado';
+        if (!atualizarPagamento(pedidoSalvo.status || 'Aguardando')) {
+          acompanharPagamento();
+        }
+      }
+    } catch (error) {
+      sessionStorage.removeItem('cineInforSessao');
+      sessionStorage.removeItem('cineInforPedidoAtual');
+    }
 
   </script>
 
