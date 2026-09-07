@@ -797,27 +797,38 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
 .campo-ajuda {
   margin: -3px 0 1px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
 .verificacao-linha,
 .verificacao-codigo {
-  display: flex;
-  align-items: stretch;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
 }
 
 .verificacao-linha input,
 .verificacao-codigo input {
-  flex: 1 1 260px;
+  min-width: 0;
+  min-height: 54px !important;
+  font-size: 16px !important;
 }
 
-.verificacao-botao {
-  flex: 0 0 auto;
+.verificacao-codigo input {
+  font-size: 18px !important;
+  font-weight: 700;
+  letter-spacing: .16em;
+}
+
+.verificacao-linha .verificacao-botao,
+.verificacao-codigo .verificacao-botao {
   width: auto;
-  min-width: 142px;
-  padding: 0 16px;
+  min-width: 164px;
+  min-height: 54px;
+  padding: 0 18px;
+  font-size: 13.5px;
 }
 
 .verificacao-botao:disabled,
@@ -945,6 +956,16 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
   #dadosPedido {
     gap: 12px;
   }
+
+  .verificacao-linha,
+  .verificacao-codigo {
+    grid-template-columns: 1fr;
+  }
+
+  .verificacao-linha .verificacao-botao,
+  .verificacao-codigo .verificacao-botao {
+    width: 100%;
+  }
 }
 
 @media (max-width: 420px) {
@@ -971,20 +992,6 @@ h1, h2, h3 { font-family: var(--sans); font-weight: 800; letter-spacing: -.02em;
 
   .opcoes {
     flex-direction: column;
-  }
-
-  .verificacao-linha,
-  .verificacao-codigo {
-    flex-direction: column;
-  }
-
-  .verificacao-linha input,
-  .verificacao-codigo input {
-    flex-basis: auto;
-  }
-
-  .verificacao-botao {
-    width: 100%;
   }
 
   .opcoes label {

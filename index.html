@@ -728,14 +728,14 @@
 
             <p>
               Escaneie o QR Code com o app do seu banco para pagar, ou copie o código Pix.
-              Depois do pagamento, aguarde a confirmação do responsável.
+              Depois do pagamento, você pode voltar mais tarde para conferir a confirmação.
             </p>
 
             <div id="pagamentoStatus" class="pagamento-status aguardando" role="status" aria-live="polite">
               <span class="pagamento-status-icone" aria-hidden="true"></span>
               <div>
                 <strong id="pagamentoStatusTitulo">Aguardando confirmação</strong>
-                <span id="pagamentoStatusTexto">Pague o Pix e mantenha esta página aberta.</span>
+                <span id="pagamentoStatusTexto">Após fazer o Pix, deixe esta aba aberta. Você pode voltar mais tarde: o status será atualizado automaticamente.</span>
               </div>
             </div>
 
@@ -1387,7 +1387,7 @@
       } else {
         pagamentoStatusTitulo.textContent = 'Aguardando confirmação';
         pagamentoStatusTexto.textContent =
-          'Após pagar o Pix, aguarde o responsável conferir o recebimento.';
+          'Após fazer o Pix, deixe esta aba aberta. Você pode voltar mais tarde: o status será atualizado automaticamente quando o responsável confirmar.';
         btnGerarTicket.disabled = true;
         btnGerarTicket.textContent = 'Ticket disponível após a confirmação';
       }
@@ -1747,7 +1747,8 @@
         if (!atualizarPagamento(ordem.status)) acompanharPagamento();
         sessionStorage.setItem('cineInforPedidoAtual', JSON.stringify(pedido));
         statusMsg.style.color = '#28a745';
-        statusMsg.textContent = 'Pix gerado. Após pagar, aguarde a confirmação do responsável.';
+        statusMsg.textContent =
+          'Pix gerado. Faça o pagamento e volte mais tarde nesta mesma aba; confirmaremos o status automaticamente.';
         dadosPedido.disabled = true;
         btnEnviar.textContent = 'Pedido gerado';
         pedidoCriado = true;
