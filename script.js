@@ -285,10 +285,25 @@
       }
     });
 
+    function mensagemErroParaUsuario(error) {
+      const code = error && error.code ? error.code : '';
+      if (code === 'EMAIL_LIMIT_REACHED') {
+        return 'O limite de atendimentos de hoje foi atingido. Por favor, retorne amanhã ou fale com um responsável.';
+      }
+      if (code === 'SERVICE_UNAVAILABLE' ||
+          code === 'INTERNAL_ERROR' ||
+          code === 'REQUEST_TIMEOUT') {
+        return 'Serviço temporariamente indisponível. Tente novamente mais tarde. Se o problema continuar, retorne amanhã ou fale com um responsável.';
+      }
+      return error && error.message
+        ? error.message
+        : 'Não foi possível concluir a operação. Tente novamente.';
+    }
+
     function chamarBackend(action, payload = {}, sessionToken = '') {
       return new Promise((resolve, reject) => {
         if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(URL_APPS_SCRIPT)) {
-          reject(new Error('O endereço do Apps Script ainda não foi configurado no index.html.'));
+          reject(new Error('O endereço do Apps Script ainda não foi configurado no script.js.'));
           return;
         }
 
@@ -297,7 +312,7 @@
         const iframe = document.createElement('iframe');
         iframe.name = frameName;
         iframe.hidden = true;
-        iframe.title = 'Comunicação segura com o Cine Infor';
+        iframe.title = 'Comunicação com o Cine Infor';
         document.body.appendChild(iframe);
 
         const formBridge = document.createElement('form');
@@ -324,7 +339,9 @@
         const timer = setTimeout(() => {
           requisicoesPendentes.delete(requestId);
           iframe.remove();
-          reject(new Error('O servidor demorou para responder. Tente novamente.'));
+          const erro = new Error('O servidor demorou para responder.');
+          erro.code = 'REQUEST_TIMEOUT';
+          reject(erro);
         }, timeoutMs);
 
         requisicoesPendentes.set(requestId, { resolve, reject, timer, iframe });
@@ -352,8 +369,20 @@
 
     chamarBackend('getPublicConfig').then(resposta => {
       aplicarPrecos(resposta.pricesInCents);
-    }).catch(() => {
-      // O formulário mostrará o erro de configuração quando houver interação.
+      if (resposta.serviceStatus && !resposta.serviceStatus.verificationAvailable) {
+        const erro = new Error('Atendimento temporariamente indisponível.');
+        erro.code = resposta.serviceStatus.retry === 'tomorrow'
+          ? 'EMAIL_LIMIT_REACHED'
+          : 'SERVICE_UNAVAILABLE';
+        const statusInicial = document.getElementById('status');
+        statusInicial.style.color = '#dc3545';
+        statusInicial.textContent = mensagemErroParaUsuario(erro);
+        document.getElementById('btnEnviarCodigo').disabled = true;
+      }
+    }).catch(error => {
+      const statusInicial = document.getElementById('status');
+      statusInicial.style.color = '#dc3545';
+      statusInicial.textContent = mensagemErroParaUsuario(error);
     });
 
 
@@ -400,6 +429,8 @@
 
     let ticketEmitido = false;
 
+    let falhasConsultaPagamento = 0;
+
 
     function formatarReais(valor) {
 
@@ -423,6 +454,7 @@
       resumoLista.innerHTML = '';
 
       ticketEmitido = false;
+      falhasConsultaPagamento = 0;
       btnNovoPedido.hidden = true;
       btnNovoPedido.disabled = true;
       btnNovoPedido.textContent = 'Fazer outro pedido';
@@ -515,7 +547,7 @@
             : 'O responsável confirmou o recebimento do Pix.';
         btnGerarTicket.disabled = !podeEmitirTicket;
         btnGerarTicket.textContent = podeEmitirTicket
-          ? 'Baixar ticket seguro (PDF)'
+          ? 'Baixar ticket (PDF)'
           : 'Ticket já utilizado';
         btnNovoPedido.hidden = false;
         btnNovoPedido.disabled = status === 'Pago' && !ticketEmitido;
@@ -547,13 +579,19 @@
         });
 
         ultimoPedido.status = resposta.order.status;
+        falhasConsultaPagamento = 0;
         sessionStorage.setItem('cineInforPedidoAtual', JSON.stringify(ultimoPedido));
         if (atualizarPagamento(resposta.order.status)) {
           clearInterval(timerPagamento);
           timerPagamento = null;
         }
       } catch (error) {
+        falhasConsultaPagamento += 1;
         console.warn('Não foi possível atualizar o pagamento:', error.message);
+        if (falhasConsultaPagamento >= 2) {
+          pagamentoStatusTitulo.textContent = 'Não foi possível consultar agora';
+          pagamentoStatusTexto.textContent = mensagemErroParaUsuario(error);
+        }
       }
 
     }
@@ -638,7 +676,7 @@
       if (!ultimoPedido || !ultimoPedido.statusToken) return;
 
       btnGerarTicket.disabled = true;
-      btnGerarTicket.textContent = 'Emitindo ticket seguro...';
+      btnGerarTicket.textContent = 'Baixando PDF...';
 
       try {
         const resposta = await chamarBackend('issueTicket', {
@@ -658,20 +696,20 @@
         );
         statusMsg.style.color = '#28a745';
         statusMsg.textContent =
-          `Ticket emitido pelo servidor. Código de validação: ${ticket.validationCode}.`;
+          `PDF baixado. Código de validação: ${ticket.validationCode}.`;
         ticketEmitido = true;
         btnNovoPedido.hidden = false;
         btnNovoPedido.disabled = false;
         btnNovoPedido.textContent = 'Fazer outro pedido';
       } catch (error) {
         statusMsg.style.color = '#dc3545';
-        statusMsg.textContent = error.message;
+        statusMsg.textContent = mensagemErroParaUsuario(error);
         await consultarPagamento();
       } finally {
         const podeBaixar = ultimoPedido && ultimoPedido.status === 'Pago';
         btnGerarTicket.disabled = !podeBaixar;
         btnGerarTicket.textContent = podeBaixar
-          ? 'Baixar ticket seguro (PDF)'
+          ? 'Baixar ticket (PDF)'
           : 'Ticket indisponível';
       }
 
@@ -768,7 +806,7 @@
         codigoVerificacao.focus();
         mostrarEmailStatus(resposta.message, 'sucesso');
       } catch (error) {
-        mostrarEmailStatus(error.message, 'erro');
+        mostrarEmailStatus(mensagemErroParaUsuario(error), 'erro');
       } finally {
         btnEnviarCodigo.disabled = false;
       }
@@ -791,7 +829,7 @@
           resposta.expiresInSeconds
         );
       } catch (error) {
-        mostrarEmailStatus(error.message, 'erro');
+        mostrarEmailStatus(mensagemErroParaUsuario(error), 'erro');
       } finally {
         btnConfirmarCodigo.disabled = false;
       }
@@ -882,7 +920,7 @@
         pedidoCriado = true;
       } catch (error) {
         statusMsg.style.color = '#dc3545';
-        statusMsg.textContent = error.message;
+        statusMsg.textContent = mensagemErroParaUsuario(error);
         if (error.code === 'AUTH_REQUIRED' || error.code === 'SESSION_EXPIRED') {
           expirarSessaoComprador();
         }

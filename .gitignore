@@ -1,0 +1,27 @@
+# Configuracoes e credenciais locais
+.env
+.env.*
+!.env.example
+.clasp.json
+credentials*.json
+service-account*.json
+*.pem
+*.key
+*.p12
+
+# Dados reais e exportacoes
+dados-clientes/
+exports/
+*.csv
+
+# Documento local de repasse/manutencao
+MAPA_MANUTENCAO_LOCAL.md
+
+# Arquivos temporarios do sistema e editores
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+.vscode/
+.idea/
+

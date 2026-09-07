@@ -17,7 +17,8 @@ Cada pedido aceita de 1 a 10 ingressos. O valor é multiplicado e validado no se
 
 - `index.html`, `style.css` e `script.js`: frontend usado pelo site.
 - `vendor/qrcode.min.js`: gerador de QR Code hospedado no próprio projeto.
-- `apps-script/Code.gs`: backend seguro para Google Apps Script.
+- `apps-script/Code.gs`: backend do Google Apps Script.
+- `ATUALIZAR_APPS_SCRIPT.md`: instruções rápidas para publicar mudanças no backend.
 - `apps-script/appsscript.json`: manifesto do Apps Script.
 - `GUIA_CONFIGURACAO.md`: passo a passo completo de instalação e operação.
 - `apps-script/README.md`: resumo técnico do backend.

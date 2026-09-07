@@ -8,6 +8,10 @@ const source = fs.readFileSync(
   path.join(__dirname, '..', 'apps-script', 'Code.gs'),
   'utf8'
 );
+const frontendSource = fs.readFileSync(
+  path.join(__dirname, '..', 'script.js'),
+  'utf8'
+);
 
 const context = vm.createContext({
   console,
@@ -49,6 +53,36 @@ function validPayload(overrides = {}) {
 test('calcula o total no servidor', () => {
   const order = context.validateOrderPayload_(validPayload());
   assert.equal(order.totalCents, 600);
+});
+
+test('identifica erros conhecidos de cota do Apps Script', () => {
+  assert.equal(
+    context.isServiceUnavailableError_(new Error('Service invoked too many times for one day')),
+    true
+  );
+  assert.equal(
+    context.isServiceUnavailableError_(new Error('Exceeded maximum execution time')),
+    true
+  );
+  assert.equal(context.isServiceUnavailableError_(new Error('Turma invalida')), false);
+});
+
+test('avisa no carregamento quando a cota diaria de e-mail acabou', () => {
+  context.PropertiesService.getScriptProperties = () => ({
+    getProperty: () => ''
+  });
+  context.MailApp = { getRemainingDailyQuota: () => 10 };
+  const status = context.getPublicServiceStatus_();
+  assert.equal(status.verificationAvailable, false);
+  assert.equal(status.retry, 'tomorrow');
+});
+
+test('frontend trata falta de resposta e usa textos diretos para o PDF', () => {
+  assert.match(frontendSource, /erro\.code = 'REQUEST_TIMEOUT'/);
+  assert.match(frontendSource, /falhasConsultaPagamento >= 2/);
+  assert.match(frontendSource, /Baixando PDF\.\.\./);
+  assert.match(frontendSource, /Baixar ticket \(PDF\)/);
+  assert.doesNotMatch(frontendSource, /ticket seguro|PDF seguro/i);
 });
 
 test('multiplica os ingressos no total calculado pelo servidor', () => {

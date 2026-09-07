@@ -11,7 +11,7 @@ paga e vê "Aguardando confirmação"
         ↓
 responsável confere o extrato e marca "Pago" na planilha
         ↓
-aluno vê "Pagamento confirmado" e solicita o PDF seguro ao servidor
+aluno vê "Pagamento confirmado" e baixa o PDF
 ```
 
 O Pix não é confirmado automaticamente pelo banco. A confirmação é feita por um responsável depois de conferir o recebimento no extrato.
@@ -23,6 +23,7 @@ O Pix não é confirmado automaticamente pelo banco. A confirmação é feita po
 - `style.css`: aparência da página e dos estados de pagamento.
 - `apps-script/Code.gs`: backend, verificação de e-mail, preços, Pix, gravação, consulta protegida e emissão do PDF.
 - `apps-script/appsscript.json`: configuração do projeto Apps Script.
+- `ATUALIZAR_APPS_SCRIPT.md`: roteiro curto para publicar mudanças no backend.
 - `tests/apps-script-security.test.js`: testes das validações críticas.
 - Google Sheets: banco de dados privado dos pedidos.
 
@@ -77,7 +78,7 @@ No Apps Script, abra **Configurações do projeto > Propriedades do script** e c
 | `SPREADSHEET_ID` | `1AbC...xyz` | ID copiado da URL da planilha |
 | `INSTITUTIONAL_DOMAIN` | `aluno.ce.gov.br` | Domínio permitido, sem `@` |
 | `ALLOWED_ORIGINS` | `https://ink-creator.github.io` | Origem onde o site está publicado, sem caminho e sem `/` final |
-| `ADMIN_EMAILS` | `gugasksk@gmail.com` | Responsáveis autorizados, separados por vírgula |
+| `ADMIN_EMAILS` | `responsavel@exemplo.com` | Responsáveis autorizados, separados por vírgula |
 | `MAX_ORDERS_PER_EMAIL_PER_HOUR` | `5` | Limite de pedidos por aluno por hora |
 | `MAX_VERIFICATION_EMAILS_PER_ADDRESS_PER_HOUR` | `3` | Máximo de códigos por endereço em uma hora |
 | `MAX_VERIFICATION_EMAILS_PER_ADDRESS_PER_DAY` | `5` | Máximo de códigos por endereço no dia |
@@ -231,7 +232,7 @@ Tentativas de pular ou voltar etapas são desfeitas e registradas na aba `Audito
 
 As turmas precisam existir nos dois lugares abaixo:
 
-1. `allowedClasses` em `apps-script/Code.gs`, que é a lista segura aceita pelo servidor;
+1. `allowedClasses` em `apps-script/Code.gs`, que é a lista aceita pelo servidor;
 2. as opções do campo `<select id="turma">` em `index.html`, que são exibidas ao aluno.
 
 No backend, escreva os nomes sem acentos, seguindo o formato das turmas que já existem. Depois atualize a implantação.
@@ -279,12 +280,16 @@ O comprador pode escolher de 1 a 10 ingressos por pedido. Para mudar esse limite
 - verifique a cota diária de envio de e-mails da conta do Apps Script.
 - confira se algum dos limites `MAX_VERIFICATION_*` foi alcançado.
 
-### A página diz que o servidor demorou
+### A página diz que o serviço está temporariamente indisponível
 
 - confira se a URL `/exec` foi colada no `script.js`;
 - confirme que a implantação permite acesso a **Qualquer pessoa**;
 - confira `ALLOWED_ORIGINS`;
 - confirme que uma nova versão foi implantada depois da última alteração.
+- abra **Execuções** no Apps Script e confira erros ou cotas excedidas;
+- tente novamente mais tarde. Quando o limite diário de e-mails for atingido, aguarde o próximo dia.
+
+O site reconhece erros de cota retornados pelo Apps Script. Se o Google interromper o serviço antes que o código consiga responder, o navegador não recebe o motivo exato; nesse caso, o tempo limite também mostra a orientação de indisponibilidade. Durante a espera do pagamento, o aviso aparece depois de duas consultas consecutivas sem resposta e desaparece quando uma consulta funciona novamente.
 
 ### O status volta para `Aguardando`
 

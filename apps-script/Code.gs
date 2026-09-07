@@ -1,5 +1,5 @@
 /**
- * Backend seguro do Cine Infor para Google Apps Script (runtime V8).
+ * Backend do Cine Infor para Google Apps Script (runtime V8).
  *
  * Este projeto deve ser criado como um Apps Script INDEPENDENTE. Nao vincule o
  * codigo a planilha: assim, editores da planilha nao ganham acesso ao backend.
@@ -162,18 +162,27 @@ function doPost(event) {
       }, requestId);
     }
 
+    const serviceUnavailable = isServiceUnavailableError_(error);
     return bridgeResponse_({
       ok: false,
-      code: 'INTERNAL_ERROR',
-      error: 'Nao foi possivel concluir a operacao.'
+      code: serviceUnavailable ? 'SERVICE_UNAVAILABLE' : 'INTERNAL_ERROR',
+      error: serviceUnavailable
+        ? 'Servico temporariamente indisponivel. Tente novamente mais tarde ou retorne amanha.'
+        : 'Nao foi possivel concluir a operacao. Tente novamente mais tarde.'
     }, requestId);
   }
+}
+
+function isServiceUnavailableError_(error) {
+  const message = String(error && error.message ? error.message : error || '');
+  return /quota|limit exceeded|too many times|invoked too many|service using too much computer time|maximum execution time/i.test(message);
 }
 
 function dispatchBuyerAction_(action, payload, sessionToken) {
   if (action === 'getPublicConfig') {
     assertOnlyFields_(payload, []);
     return {
+      serviceStatus: getPublicServiceStatus_(),
       pricesInCents: {
         ticket: CONFIG_.pricesInCents.ticket,
         popcorn: CONFIG_.pricesInCents.popcorn,
@@ -218,6 +227,28 @@ function dispatchBuyerAction_(action, payload, sessionToken) {
     return { ticket: issueTicket_(payload) };
   }
   throw new PublicError_('INVALID_ACTION', 'Operacao invalida.');
+}
+
+function getPublicServiceStatus_() {
+  const properties = PropertiesService.getScriptProperties();
+  const limits = getVerificationLimits_(properties);
+  const now = new Date();
+  const timeZone = Session.getScriptTimeZone() || 'America/Fortaleza';
+  const day = Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
+  const hour = Utilities.formatDate(now, timeZone, 'yyyy-MM-dd-HH');
+  const globalState = normalizeVerificationRateState_(
+    properties.getProperty('OTP_RATE_GLOBAL_V1'),
+    day,
+    hour
+  );
+  const dailyLimitReached = globalState.dayCount >= limits.globalPerDay ||
+    MailApp.getRemainingDailyQuota() <= limits.emailQuotaReserve;
+  const hourlyLimitReached = globalState.hourCount >= limits.globalPerHour;
+
+  return {
+    verificationAvailable: !dailyLimitReached && !hourlyLimitReached,
+    retry: dailyLimitReached ? 'tomorrow' : (hourlyLimitReached ? 'later' : '')
+  };
 }
 
 function parseBridgeRequest_(event) {
@@ -564,7 +595,7 @@ function requireVerificationEmailCapacity_(email, now) {
       MailApp.getRemainingDailyQuota() <= limits.emailQuotaReserve) {
     throw new PublicError_(
       'EMAIL_LIMIT_REACHED',
-      'O envio de codigos esta temporariamente indisponivel. Tente mais tarde ou procure um organizador.'
+      'O limite de atendimentos de hoje foi atingido. Retorne amanha ou procure um responsavel.'
     );
   }
 
